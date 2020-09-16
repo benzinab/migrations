@@ -6,6 +6,7 @@ namespace Doctrine\Migrations\Tests;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\Migrations\AbstractMigration;
 use Doctrine\Migrations\Configuration\Configuration;
 use Doctrine\Migrations\Configuration\Connection\ExistingConnection;
 use Doctrine\Migrations\Configuration\EntityManager\ExistingEntityManager;
@@ -16,6 +17,7 @@ use Doctrine\Migrations\Exception\MissingDependency;
 use Doctrine\Migrations\Finder\GlobFinder;
 use Doctrine\Migrations\Finder\RecursiveRegexFinder;
 use Doctrine\Migrations\Metadata\Storage\TableMetadataStorageConfiguration;
+use Doctrine\Migrations\Version\MigrationFactory;
 use Doctrine\ORM\EntityManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
@@ -154,6 +156,36 @@ final class DependencyFactoryTest extends MigrationTestCase
             return $anotherLogger;
         });
         self::assertSame($anotherLogger, $di->getLogger());
+    }
+
+    public function testServiceDefinitionWithReference() : void
+    {
+        $migration = $this->createMock(AbstractMigration::class);
+
+        $di = DependencyFactory::fromConnection(new ExistingConfiguration($this->configuration), new ExistingConnection($this->connection));
+
+        $di->setDefinition(MigrationFactory::class, static function (DependencyFactory $innerDi) use ($migration) {
+            // this call needs to stay here just to trigger again the dependency resolution
+            $innerDi->getMigrationFactory();
+
+            return new class ($migration) implements MigrationFactory {
+                /** @var AbstractMigration */
+                private $migration;
+
+                public function __construct(AbstractMigration $migration)
+                {
+                    $this->migration = $migration;
+                }
+
+                public function createVersion(string $className) : AbstractMigration
+                {
+                    return $this->migration;
+                }
+            };
+        });
+
+        $factory = $di->getMigrationFactory();
+        self::assertSame($migration, $factory->createVersion('abc'));
     }
 
     public function testServiceHasPriorityOverDefinition() : void
